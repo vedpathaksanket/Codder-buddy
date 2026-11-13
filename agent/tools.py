@@ -46,3 +46,9 @@ def validate_content(name: str, content: str):
         ast.parse(content, filename=name)
     elif name.endswith('.json'):
         json.loads(content)
+
+
+def validation_report():
+    return {'file_completeness': 'passed', 'python_json_syntax': 'passed where applicable',
+            'runtime_tests': 'not run',
+            'notice': 'Generated code is untrusted. Review it and run its tests in an isolated environment.'}

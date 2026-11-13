@@ -1,10 +1,12 @@
 # Coder Buddy
 
-Turn a project description into a plan, implementation tasks, and downloadable source files using Groq and LangGraph. This version adds a browser studio while preserving a command-line workflow.
+Turn a project description into a plan, implementation tasks, and downloadable source files using Groq and LangGraph, or import a project generated in your own ChatGPT session. This version includes a browser studio and a command-line workflow.
 
 ## What works
 
-- Planner → architect → coder pipeline with validated structured responses.
+- Planner → architect → coder pipeline with validated structured responses and one repair attempt per stage.
+- ChatGPT copy-and-import workflow that needs no provider API key, with a copyable prompt, JSON import and the same file validation.
+- Local launcher that creates your access token on first run.
 - Responsive browser interface with progress, persistent history, a source viewer, deletion, and ZIP downloads.
 - Per-project directories, safe relative paths, blocked symlinks, and no generated-code execution on the server.
 - Complete planned-file coverage, nonempty-file checks, Python/JSON syntax validation, and one syntax-repair attempt per file.
@@ -14,12 +16,35 @@ Turn a project description into a plan, implementation tasks, and downloadable s
 
 **Deployment scope:** a private, single-owner application with one application worker and one shared access token. Anyone with that token can access every project. It is not a multi-user SaaS service. Do not expose it publicly without TLS and appropriate access controls. Generated projects are drafts requiring human review and isolated runtime testing; a completed job does not certify that its generated application is correct or production-ready.
 
-## Quick start (Windows PowerShell, macOS, Linux)
+## Fastest start: use your ChatGPT account
+
+Install Python 3.11–3.13 and [uv](https://docs.astral.sh/uv/getting-started/installation/), then run:
+
+```sh
+git clone --branch improve/reliable-coder-buddy https://github.com/vedpathaksanket/Codder-buddy.git
+cd Codder-buddy
+uv sync --frozen
+uv run python start.py
+```
+
+The launcher creates an access token in `.env`, displays it in your local terminal, and starts the app at **http://127.0.0.1:8000**. Paste that token into the sign-in form. If port 8000 is already busy, run `uv run python start.py --port 8001`.
+
+1. Select **ChatGPT · copy and import** and enter your project brief.
+2. Click **Prepare ChatGPT prompt**, then **Copy prompt**.
+3. Open ChatGPT using your own account, paste the prompt and obtain the JSON response.
+4. Paste the complete JSON into Coder Buddy, or select the downloaded JSON file.
+5. Click **Validate and import project**, inspect the files and download the ZIP.
+
+This is a manual workflow. It does not automatically connect your Plus subscription or use your ChatGPT session. Your ChatGPT plan's normal availability and limits apply. Direct subscription inference requires a separately authorized integration; it is not implemented here. The prompt contains your brief and output instructions, never the server access token.
+
+Imports accept at most 20 files, 100,000 characters per file, 1 MB of combined file content, and a 2 MB JSON request. README.md is required. Markdown-wrapped JSON can be pasted. Invalid JSON, unsafe filenames, duplicate paths, file/directory collisions and invalid Python/JSON are rejected without saving a partial project. Correct the response in ChatGPT and import it again.
+
+## Automatic Groq generation (Windows PowerShell, macOS, Linux)
 
 Install Python 3.11–3.13 and [uv](https://docs.astral.sh/uv/getting-started/installation/), then:
 
 ```sh
-git clone https://github.com/vedpathaksanket/Codder-buddy.git
+git clone --branch improve/reliable-coder-buddy https://github.com/vedpathaksanket/Codder-buddy.git
 cd Codder-buddy
 uv sync --frozen
 ```
@@ -97,7 +122,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Tests cover the full three-stage pipeline with controlled model responses, file coverage, repair limits, path traversal, symlink escapes, authentication, persistent history, downloads, deletion, provider failure redaction, request limits, and queue isolation. They do not call Groq or spend API credits. The browser test starts a separate deterministic fixture server and exercises sign-in, generation, source viewing, ZIP download, mobile layout, deletion and disconnect. Local Chromium execution was blocked by the development environment; browser verification is configured in CI.
+Tests cover ChatGPT prompt export and import without a provider key, atomic rejection, Windows filename restrictions, first-run setup, and the full three-stage pipeline with controlled model responses, file coverage, repair limits, path traversal, symlink escapes, authentication, persistent history, downloads, deletion, provider failure redaction, request limits, and queue isolation. They do not call Groq or spend API credits. The browser tests start a separate deterministic fixture server and exercise sign-in, generation, ChatGPT import and invalid JSON feedback, source viewing, ZIP download, mobile layout, deletion and disconnect. Local Chromium execution was blocked by the development environment; browser verification runs in CI. A separate CI job builds the production Docker image and verifies non-root startup, authentication, import without a provider key, ZIP export and persistence after restart.
 
 For a live smoke test, configure your key, request a tiny Python greeting project, inspect the downloaded files, and run its tests in isolation. Compare the actual result with the prompt. Repeat with a small browser project. A live provider test requires valid account credentials and was not performed in the development environment.
 
@@ -108,7 +133,9 @@ For a live smoke test, configure your key, request a tiny Python greeting projec
 - `agent/tools.py`: workspace confinement and non-executing syntax checks.
 - `app.py`: authenticated API, single generation worker and SQLite metadata.
 - `web/`: framework-free browser interface. Source is displayed as text, never rendered as executable HTML.
-- `main.py`: CLI entry point.
+- `main.py`: automatic generation CLI.
+- `start.py`: local browser-app launcher with first-run setup.
+- `agent/chatgpt.py`: prompt export for the manual ChatGPT workflow.
 - `tests/`: provider-free integration and regression tests.
 
 A request moves through `queued → running → completed/failed`. The UI shows planning, architecture, coding and validation stages. Each model request has a 90-second timeout and at most two provider retries. A project is limited to 20 files, 100,000 characters per file, and 180,000 characters of existing-file context. These limits deliberately keep generation bounded. There is no shell tool, dependency installer, or runtime runner exposed to the model.
@@ -121,13 +148,14 @@ Jobs and prompts persist in `data/jobs.sqlite3`; files live in `data/projects/<i
 
 A completed result means every planned file was written, nonempty, and passed supported syntax checks. It does **not** mean JavaScript/HTML/CSS was runtime-tested, dependencies are secure, imports resolve, or the user's acceptance criteria passed. The UI and API expose this distinction. Review the code before installing dependencies or executing it.
 
-Before a public multi-user release, add individual accounts and per-user authorization, an external durable queue, per-user quotas and billing controls, a sandboxed build/test service, dependency scanning, production monitoring, and load/security testing. The Docker configuration is supplied but must be built and verified on the target deployment host.
+Before a public multi-user release, add individual accounts and per-user authorization, an external durable queue, per-user quotas and billing controls, a sandboxed build/test service, dependency scanning, production monitoring, and load/security testing. CI builds and smoke-tests the Docker image. Verify TLS, storage permissions, backups and networking on your actual deployment host before relying on it.
 
 ## Troubleshooting
 
 - **Server refuses to start:** set a random `CODER_BUDDY_TOKEN` of at least 32 characters.
 - **401:** use the server token, not the Groq API key.
-- **503 on Generate:** configure `GROQ_API_KEY` and restart.
+- **Import rejected:** read the validation message, ask ChatGPT for corrected complete JSON, and retry. No partial import is saved.
+- **503 on Generate:** choose ChatGPT import, or configure `GROQ_API_KEY` and restart.
 - **Failed generation:** check the logged exception class, provider quota, model access and network. Retry with a smaller project. Partial output is not offered as a successful download.
 - **Queue full:** wait for a job to finish.
 - **Project limit reached:** delete old projects.

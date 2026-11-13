@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import os
+import shutil
 import sqlite3
 import threading
 import time
@@ -15,11 +16,13 @@ from uuid import uuid4
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, JSONResponse
+from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 
-from agent.states import GenerationRequest
-from agent.tools import Workspace
+from agent.states import GenerationRequest, ImportRequest, Plan, File
+from agent.chatgpt import export_prompt
+from agent.tools import Workspace, validate_content, validation_report
 
 logger = logging.getLogger('coder_buddy')
 BASE = Path(__file__).resolve().parent
@@ -104,14 +107,22 @@ def create_app(data_dir=None, token=None, runner=None):
     app = FastAPI(title='Coder Buddy', version='0.2.0', lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
 
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(request, exc):
+        # Avoid echoing entire uploaded source files in validation responses.
+        messages = ['.'.join(str(p) for p in error['loc'][1:]) + ': ' + error['msg']
+                    for error in exc.errors()[:5]]
+        return JSONResponse(status_code=422, content={'detail': '; '.join(messages)})
+
     @app.middleware('http')
     async def security(request: Request, call_next):
         if request.method == 'POST':
             # Read in bounded chunks before JSON parsing, including chunked requests.
             body = bytearray()
+            limit = 2000000 if request.url.path == '/api/import' else 40000
             async for chunk in request.stream():
                 body.extend(chunk)
-                if len(body) > 40000:
+                if len(body) > limit:
                     return Response('Request too large', status_code=413)
             request._body = bytes(body)
         response = await call_next(request)
@@ -138,7 +149,44 @@ def create_app(data_dir=None, token=None, runner=None):
 
     @app.get('/api/config', dependencies=[Depends(auth)])
     def config():
-        return {'provider_configured': bool(os.getenv('GROQ_API_KEY')), 'max_files': 20}
+        return {'provider_configured': runner is not None or bool(os.getenv('GROQ_API_KEY')), 'max_files': 20, 'chatgpt_import': True}
+
+    @app.post('/api/chatgpt-prompt', dependencies=[Depends(auth)])
+    def chatgpt_prompt(body: GenerationRequest):
+        return {'prompt': export_prompt(body.prompt)}
+
+    @app.post('/api/import', status_code=201, dependencies=[Depends(auth)])
+    def import_project(body: ImportRequest):
+        # Validate all content before creating a directory or a database row.
+        for file in body.project.files:
+            try:
+                validate_content(file.path, file.content)
+            except (ValueError, SyntaxError) as exc:
+                raise HTTPException(422, f'{file.path}: invalid or empty content ({type(exc).__name__}). '
+                                    'Ask ChatGPT to correct the file and return the full JSON.') from exc
+        plan = Plan(name=body.project.name, description=body.project.description,
+                    techstack=body.project.techstack, features=['Imported project'],
+                    files=[File(path=f.path, purpose='Imported source') for f in body.project.files])
+        job_id = uuid4().hex
+        folder = root / 'projects' / job_id
+        payload = {'files': [f.path for f in body.project.files], 'plan': plan.model_dump(),
+                   'validation': validation_report(), 'source': 'chatgpt_import'}
+        with lock:
+            try:
+                with connection() as conn:
+                    if conn.execute('SELECT COUNT(*) FROM jobs').fetchone()[0] >= 100:
+                        raise HTTPException(409, 'Project limit reached. Delete old projects first.')
+                    ws = Workspace(folder)
+                    for file in body.project.files:
+                        ws.write(file.path, file.content)
+                    conn.execute('INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?)',
+                                 (job_id, body.prompt, 'completed', 'imported', 'ChatGPT files imported and checked',
+                                  time.time(), json.dumps(payload)))
+            except Exception:
+                if folder.exists():
+                    shutil.rmtree(folder)
+                raise
+        return {'id': job_id, 'status': 'completed'}
 
     @app.post('/api/projects', status_code=202, dependencies=[Depends(auth)])
     def create_project(body: GenerationRequest):
@@ -172,27 +220,32 @@ def create_app(data_dir=None, token=None, runner=None):
             raise HTTPException(409, 'Project files are not ready')
         return job
 
+    def read_output(job_id, path):
+        try:
+            return Workspace(root / 'projects' / job_id).read(path)
+        except (OSError, ValueError) as exc:
+            raise HTTPException(409, 'Saved file is missing or unavailable. Reimport or regenerate this project.') from exc
+
     @app.get('/api/projects/{job_id}/file', dependencies=[Depends(auth)])
     def file(job_id: str, path: str):
         job = completed(job_id)
         if path not in job['result']['files']:
             raise HTTPException(404, 'File not found')
-        return {'path': path, 'content': Workspace(root / 'projects' / job_id).read(path)}
+        with lock:
+            return {'path': path, 'content': read_output(job_id, path)}
 
     @app.get('/api/projects/{job_id}/download', dependencies=[Depends(auth)])
     def download(job_id: str):
         job = completed(job_id)
         output = io.BytesIO()
-        ws = Workspace(root / 'projects' / job_id)
-        with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
+        with lock, zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
             for name in job['result']['files']:
-                archive.writestr(name, ws.read(name))
+                archive.writestr(name, read_output(job_id, name))
         return Response(output.getvalue(), media_type='application/zip',
                         headers={'Content-Disposition': f'attachment; filename="coder-buddy-{job_id[:8]}.zip"'})
 
     @app.delete('/api/projects/{job_id}', status_code=204, dependencies=[Depends(auth)])
     def delete(job_id: str):
-        import shutil
         with lock:
             job = get(job_id)
             if job['status'] in ('queued', 'running'):

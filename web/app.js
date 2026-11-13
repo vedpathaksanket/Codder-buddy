@@ -1,5 +1,5 @@
 'use strict';
-let token = '', selected = null, timer = null, revision = 0;
+let token = '', selected = null, timer = null, revision = 0, fileRevision = 0, providerReady = false, importBrief = '';
 const $ = id => document.getElementById(id);
 const tell = message => { $('notice').textContent = message; };
 async function api(path, options = {}) {
@@ -14,7 +14,9 @@ async function api(path, options = {}) {
 function disconnect() {
   token = ''; selected = null; revision++; clearTimeout(timer);
   $('studio').hidden = true; $('login').hidden = false; $('project').hidden = true;
-  $('source').textContent = ''; $('history').replaceChildren(); tell('Disconnected.');
+  $('source').textContent = ''; $('history').replaceChildren();
+  $('bundle').value = ''; $('chatgpt-prompt').value = ''; $('bundle-file').value = '';
+  $('chatgpt-bridge').hidden = true; importBrief = ''; tell('Disconnected.');
 }
 $('logout').onclick = disconnect;
 $('login-form').onsubmit = async event => {
@@ -22,7 +24,9 @@ $('login-form').onsubmit = async event => {
   try {
     const config = await (await api('/api/config')).json();
     $('token').value = ''; $('login').hidden = true; $('studio').hidden = false;
-    tell(config.provider_configured ? 'Connected. Ready to build.' : 'Connected. Set GROQ_API_KEY on the server to enable generation.');
+    providerReady = config.provider_configured;
+    $('mode').value = providerReady ? 'groq' : 'chatgpt'; setMode();
+    tell(providerReady ? 'Connected. Ready to build.' : 'Connected. Use ChatGPT import without an API key, or configure Groq for automatic generation.');
     await history();
   } catch (e) { token = ''; tell(e.message); }
 };
@@ -32,11 +36,18 @@ const examples = {
 };
 document.querySelectorAll('[data-example]').forEach(button => { button.onclick = () => { $('prompt').value = examples[button.dataset.example]; }; });
 $('generate-form').onsubmit = async event => {
-  event.preventDefault(); $('generate').disabled = true; tell('Submitting project…');
+  event.preventDefault(); $('generate').disabled = true; tell('Preparing project…');
   try {
+    if ($('mode').value === 'chatgpt') {
+      const brief = $('prompt').value;
+      const response = await (await api('/api/chatgpt-prompt', {method:'POST', body:JSON.stringify({prompt:brief})})).json();
+      importBrief = brief; $('chatgpt-prompt').value = response.prompt; $('chatgpt-bridge').hidden = false;
+      tell('Copy the prepared prompt into ChatGPT, then paste its JSON response below.');
+      $('chatgpt-bridge').scrollIntoView({behavior:'smooth'}); return;
+    }
     const job = await (await api('/api/projects', {method:'POST', body:JSON.stringify({prompt:$('prompt').value})})).json();
     tell('Project queued. You can revisit it from Your projects.'); await history(); await openProject(job.id);
-  } catch (e) { tell(e.message); } finally { $('generate').disabled = false; }
+  } catch (e) { tell(e.message); } finally { setMode(); }
 };
 async function history() {
   const jobs = await (await api('/api/projects')).json();
@@ -70,8 +81,9 @@ async function openProject(id) {
         const button = document.createElement('button'); button.textContent = path;
         button.onclick = async () => {
           try {
+            const requestVersion = ++fileRevision;
             const file = await (await api(`/api/projects/${id}/file?path=${encodeURIComponent(path)}`)).json();
-            if (version !== revision) return;
+            if (version !== revision || requestVersion !== fileRevision) return;
             $('filename').textContent = file.path; $('source').textContent = file.content;
             document.querySelectorAll('#files button').forEach(b => b.classList.toggle('active', b === button));
           } catch (e) { tell(e.message); }
@@ -98,4 +110,41 @@ $('delete').onclick = async () => {
     await api(`/api/projects/${selected}`, {method:'DELETE'}); revision++; clearTimeout(timer); selected = null;
     $('project').hidden = true; await history(); tell('Project deleted.');
   } catch (e) { tell(e.message); }
+};
+
+function setMode() {
+  const manual = $('mode').value === 'chatgpt';
+  $('generate').textContent = manual ? 'Prepare ChatGPT prompt →' : 'Generate project →';
+  $('generate').disabled = !manual && !providerReady;
+  if (!manual && !providerReady) tell('Configure GROQ_API_KEY on the server, or select ChatGPT import.');
+}
+$('mode').onchange = setMode;
+$('copy-prompt').onclick = async () => {
+  try {
+    await navigator.clipboard.writeText($('chatgpt-prompt').value);
+    tell('Prompt copied. Paste it into ChatGPT.');
+  } catch (_) {
+    $('chatgpt-prompt').focus(); $('chatgpt-prompt').select();
+    tell('Prompt selected. Press Ctrl+C (or Command+C) to copy.');
+  }
+};
+$('bundle-file').onchange = async () => {
+  const file = $('bundle-file').files[0];
+  if (!file) return;
+  if (file.size > 2000000) { tell('Choose a JSON file smaller than 2 MB.'); return; }
+  try { $('bundle').value = await file.text(); } catch (_) { tell('Could not read the file. Paste the JSON instead.'); }
+};
+$('import-form').onsubmit = async event => {
+  event.preventDefault(); $('import-project').disabled = true;
+  try {
+    let raw = $('bundle').value.trim();
+    const fenced = raw.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+    if (fenced) raw = fenced[1];
+    let project;
+    try { project = JSON.parse(raw); } catch (_) { throw new Error('Invalid JSON. Ask ChatGPT to return the complete JSON object with escaped quotes and newlines.'); }
+    const job = await (await api('/api/import', {method:'POST', body:JSON.stringify({prompt:importBrief, project})})).json();
+    tell('Project imported. File checks passed; runtime tests have not been run.');
+    $('bundle').value = ''; $('bundle-file').value = '';
+    await history(); await openProject(job.id); $('project').scrollIntoView({behavior:'smooth'});
+  } catch (e) { tell(e.message); } finally { $('import-project').disabled = false; }
 };

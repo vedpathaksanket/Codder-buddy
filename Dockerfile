@@ -2,7 +2,7 @@ FROM python:3.11-slim
 COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /uvx /bin/
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 CODER_BUDDY_DATA_DIR=/app/data
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev
 COPY agent ./agent
 COPY web ./web

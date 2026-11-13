@@ -66,7 +66,7 @@ def test_repeated_invalid_output_never_succeeds(tmp_path):
 def test_missing_plan_file_is_rejected(tmp_path):
     tasks = TaskPlan(implementation_steps=[ImplementationTask(filepath='other.py', task_description='Bad')])
     with pytest.raises(GenerationError):
-        build_agent(tmp_path, FakeModel([plan(), tasks])).invoke({'user_prompt': 'Create a test application'})
+        build_agent(tmp_path, FakeModel([plan(), tasks, tasks])).invoke({'user_prompt': 'Create a test application'})
 
 
 @pytest.mark.parametrize('path', ['../secret', '/etc/passwd', 'C:/secret', 'a\\b', '.env', 'a/../b',
@@ -103,3 +103,31 @@ def test_import_does_not_require_key(monkeypatch, tmp_path):
     monkeypatch.delenv('GROQ_API_KEY', raising=False)
     with pytest.raises(GenerationError, match='GROQ_API_KEY'):
         build_agent(tmp_path)
+
+
+def test_architecture_repairs_missing_coverage(tmp_path):
+    invalid = TaskPlan(implementation_steps=[ImplementationTask(filepath='other.py', task_description='Bad')])
+    model = FakeModel([plan(), invalid, architecture(), GeneratedFile(content="print('ok')"),
+                       GeneratedFile(content='Run python main.py')])
+    assert build_agent(tmp_path, model).invoke({'user_prompt': 'Build a Python greeting app'})['status'] == 'completed'
+    assert 'every planned file' in model.prompts[2]
+
+
+def test_structured_response_repairs_malformed_output(tmp_path):
+    model = FakeModel([{'name': 'Incomplete'}, plan(), architecture(), GeneratedFile(content="print('ok')"),
+                       GeneratedFile(content='Run python main.py')])
+    assert build_agent(tmp_path, model).invoke({'user_prompt': 'Build a Python greeting app'})['status'] == 'completed'
+    assert 'Previous output failed validation' in model.prompts[1]
+
+
+@pytest.mark.parametrize('path', ['CON', 'aux.txt', 'folder/NUL.py', 'COM1.json', 'file.', 'folder /a.py'])
+def test_windows_invalid_names_rejected(tmp_path, path):
+    with pytest.raises(ValueError):
+        Workspace(tmp_path).write(path, 'bad')
+
+
+def test_file_directory_collision_rejected():
+    data = plan().model_dump()
+    data['files'].extend([{'path': 'src', 'purpose': 'File'}, {'path': 'src/main.py', 'purpose': 'Nested'}])
+    with pytest.raises(ValidationError, match='both a file and a directory'):
+        Plan.model_validate(data)

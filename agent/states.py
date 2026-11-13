@@ -12,7 +12,21 @@ def validate_path(value: str) -> str:
         raise ValueError('Hidden files, empty segments and traversal are not allowed')
     if PurePosixPath(value).is_absolute() or not re.fullmatch(r'[A-Za-z0-9_./ -]+', value):
         raise ValueError('Unsafe file path')
+    reserved = {'con', 'prn', 'aux', 'nul', *(f'com{i}' for i in range(1, 10)),
+                *(f'lpt{i}' for i in range(1, 10))}
+    if any(part.endswith((' ', '.')) or part.split('.')[0].casefold() in reserved for part in parts):
+        raise ValueError('Use filenames that are portable to Windows')
     return value
+
+
+def validate_paths(paths):
+    canonical = [path.casefold() for path in paths]
+    if len(canonical) != len(set(canonical)):
+        raise ValueError('Duplicate file paths')
+    for path in canonical:
+        parts = path.split('/')
+        if any('/'.join(parts[:i]) in canonical for i in range(1, len(parts))):
+            raise ValueError('A path cannot be both a file and a directory')
 
 
 class StrictModel(BaseModel):
@@ -35,9 +49,7 @@ class Plan(StrictModel):
     @field_validator('files')
     @classmethod
     def unique_files(cls, files):
-        paths = [f.path.casefold() for f in files]
-        if len(paths) != len(set(paths)):
-            raise ValueError('Duplicate file paths')
+        validate_paths([f.path for f in files])
         return files
 
 
@@ -65,3 +77,29 @@ class GenerationRequest(StrictModel):
         if len(value) < 10:
             raise ValueError('Describe your project in at least 10 characters')
         return value
+
+
+class ImportedFile(GeneratedFile):
+    path: str
+    _path = field_validator('path')(validate_path)
+
+
+class ProjectBundle(StrictModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(min_length=1, max_length=4000)
+    techstack: str = Field(min_length=1, max_length=1000)
+    files: list[ImportedFile] = Field(min_length=1, max_length=20)
+
+    @field_validator('files')
+    @classmethod
+    def valid_files(cls, files):
+        validate_paths([f.path for f in files])
+        if 'README.md' not in [f.path for f in files]:
+            raise ValueError('Include README.md with setup and testing instructions')
+        if sum(len(f.content.encode('utf-8')) for f in files) > 1000000:
+            raise ValueError('Combined file contents must not exceed 1 MB')
+        return files
+
+
+class ImportRequest(GenerationRequest):
+    project: ProjectBundle
