@@ -1,28 +1,67 @@
-from typing import Optional
+"""Validated contracts shared by the three generation stages."""
+import re
+from pathlib import PurePosixPath
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from pydantic import BaseModel, Field, ConfigDict
+
+def validate_path(value: str) -> str:
+    if not value or len(value) > 240 or '\\' in value or ':' in value:
+        raise ValueError('Use a relative POSIX file path')
+    parts = value.split('/')
+    if any(p in ('', '.', '..') or p.startswith('.') for p in parts):
+        raise ValueError('Hidden files, empty segments and traversal are not allowed')
+    if PurePosixPath(value).is_absolute() or not re.fullmatch(r'[A-Za-z0-9_./ -]+', value):
+        raise ValueError('Unsafe file path')
+    return value
 
 
-class File(BaseModel):
-    path: str = Field(description="The path to the file to be created or modified")
-    purpose: str = Field(description="The purpose of the file, e.g. 'main application logic', 'data processing module', etc.")
-    
-class Plan(BaseModel):
-    name: str = Field(description="The name of app to be built")
-    description: str = Field(description="A oneline description of the app to be built, e.g. 'A web application for managing personal finances'")
-    techstack: str = Field(description="The tech stack to be used for the app, e.g. 'python', 'javascript', 'react', 'flask', etc.")
-    features: list[str] = Field(description="A list of features that the app should have, e.g. 'user authentication', 'data visualization', etc.")
-    files: list[File] = Field(description="A list of files to be created, each with a 'path' and 'purpose'")
+class StrictModel(BaseModel):
+    model_config = ConfigDict(extra='forbid')
 
-class ImplementationTask(BaseModel):
-    filepath: str = Field(description="The path to the file to be modified")
-    task_description: str = Field(description="A detailed description of the task to be performed on the file, e.g. 'add user authentication', 'implement data processing logic', etc.")
 
-class TaskPlan(BaseModel):
-    implementation_steps: list[ImplementationTask] = Field(description="A list of steps to be taken to implement the task")
-    model_config = ConfigDict(extra="allow")
-    
-class CoderState(BaseModel):
-    task_plan: TaskPlan = Field(description="The plan for the task to be implemented")
-    current_step_idx: int = Field(0, description="The index of the current step in the implementation steps")
-    current_file_content: Optional[str] = Field(None, description="The content of the file currently being edited or created")
+class File(StrictModel):
+    path: str
+    purpose: str = Field(min_length=1, max_length=2000)
+    _path = field_validator('path')(validate_path)
+
+
+class Plan(StrictModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: str = Field(min_length=1, max_length=4000)
+    techstack: str = Field(min_length=1, max_length=1000)
+    features: list[str] = Field(min_length=1, max_length=30)
+    files: list[File] = Field(min_length=1, max_length=20)
+
+    @field_validator('files')
+    @classmethod
+    def unique_files(cls, files):
+        paths = [f.path.casefold() for f in files]
+        if len(paths) != len(set(paths)):
+            raise ValueError('Duplicate file paths')
+        return files
+
+
+class ImplementationTask(StrictModel):
+    filepath: str
+    task_description: str = Field(min_length=1, max_length=6000)
+    _path = field_validator('filepath')(validate_path)
+
+
+class TaskPlan(StrictModel):
+    implementation_steps: list[ImplementationTask] = Field(min_length=1, max_length=20)
+
+
+class GeneratedFile(StrictModel):
+    content: str = Field(min_length=1, max_length=100000)
+
+
+class GenerationRequest(StrictModel):
+    prompt: str = Field(min_length=10, max_length=8000)
+
+    @field_validator('prompt')
+    @classmethod
+    def trim_prompt(cls, value):
+        value = value.strip()
+        if len(value) < 10:
+            raise ValueError('Describe your project in at least 10 characters')
+        return value

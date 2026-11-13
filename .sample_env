@@ -1,1 +1,5 @@
-GROQ_API_KEY=<YOUR_API_KEY_HERE>
+GROQ_API_KEY=
+GROQ_MODEL=openai/gpt-oss-120b
+# Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+CODER_BUDDY_TOKEN=
+CODER_BUDDY_DATA_DIR=data

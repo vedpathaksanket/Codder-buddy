@@ -1,16 +1,27 @@
 [project]
 name = "coder-buddy"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.0"
+description = "A guarded, observable AI project generator with a web UI and CLI"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 dependencies = [
-    "groq>=0.31.0",
-    "langchain>=0.3.27",
-    "langchain-core>=0.3.72",
-    "langchain-groq>=0.3.7",
-    "langgraph>=0.6.3",
-    "pip>=25.2",
-    "pydantic>=2.11.7",
-    "python-dotenv>=1.1.1",
+    "langchain-groq>=0.3.7,<0.4",
+    "langgraph>=0.6.3,<0.7",
+    "pydantic>=2.11.7,<3",
+    "python-dotenv>=1.1.1,<2",
+    "fastapi>=0.115.12,<1",
+    "uvicorn>=0.34.2,<1",
 ]
+
+[dependency-groups]
+dev = ["httpx>=0.28.1,<1", "pytest>=8.3,<9", "ruff>=0.11,<1"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

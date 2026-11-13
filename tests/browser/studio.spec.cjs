@@ -1,0 +1,25 @@
+const {test, expect} = require('@playwright/test');
+test('project studio lifecycle and mobile layout', async ({page}) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await page.getByLabel('Server access token').fill('test-only-' + 'x'.repeat(32));
+  await page.getByRole('button', {name:'Connect →', exact:true}).click();
+  await page.getByRole('button', {name:'Task manager', exact:true}).click();
+  await page.getByRole('button', {name:'Generate project →', exact:true}).click();
+  await expect(page.getByRole('button', {name:'Download ZIP ↓', exact:true})).toBeVisible();
+  await expect(page.locator('#source')).toContainText('Run python main.py');
+  await page.getByRole('button', {name:'main.py', exact:true}).click();
+  await expect(page.locator('#source')).toContainText("print('Hello')");
+  const downloading = page.waitForEvent('download');
+  await page.getByRole('button', {name:'Download ZIP ↓', exact:true}).click();
+  expect(await (await downloading).failure()).toBeNull();
+  await page.setViewportSize({width:390, height:844});
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', {name:'Delete project', exact:true}).click();
+  await expect(page.locator('#notice')).toHaveText('Project deleted.');
+  await page.getByRole('button', {name:'Disconnect', exact:true}).click();
+  await expect(page.getByLabel('Server access token')).toBeVisible();
+  expect(errors).toEqual([]);
+});

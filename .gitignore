@@ -22,3 +22,13 @@ wheels/
 
 # System files
 .DS_Store
+data/
+generated_project/
+generated_projects/
+.pytest_cache/
+.ruff_cache/
+.env.*
+!.env.example
+node_modules/
+test-results/
+playwright-report/

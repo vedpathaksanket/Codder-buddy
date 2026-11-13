@@ -1,0 +1,18 @@
+services:
+  coder-buddy:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file: .env
+    environment:
+      CODER_BUDDY_DATA_DIR: /app/data
+    volumes:
+      - project-data:/app/data
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+volumes:
+  project-data:
