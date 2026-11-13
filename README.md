@@ -1,41 +1,164 @@
-# 🛠️ Coder Buddy
+# Coder Buddy
 
-**Coder Buddy** is an AI-powered coding assistant built with [LangGraph](https://github.com/langchain-ai/langgraph).  
-It works like a multi-agent development team that can take a natural language request and transform it into a complete, working project — file by file — using real developer workflows.
+Turn a project description into a plan, implementation tasks, and downloadable source files using Groq and LangGraph, or import a project generated in your own ChatGPT session. This version includes a browser studio and a command-line workflow.
 
----
+## What works
 
-## 🏗️ Architecture
+- Planner → architect → coder pipeline with validated structured responses and one repair attempt per stage.
+- ChatGPT copy-and-import workflow that needs no provider API key, with a copyable prompt, JSON import and the same file validation.
+- Local launcher that creates your access token on first run.
+- Responsive browser interface with progress, persistent history, a source viewer, deletion, and ZIP downloads.
+- Per-project directories, safe relative paths, blocked symlinks, and no generated-code execution on the server.
+- Complete planned-file coverage, nonempty-file checks, Python/JSON syntax validation, and one syntax-repair attempt per file.
+- Bearer-token access, bounded input/output sizes, a four-job queue, and a 100-project storage limit.
+- Explicit failures for missing configuration, provider errors, invalid output, and interrupted jobs.
+- Locked dependencies, automated tests, CI, and a non-root Docker image.
 
-- **Planner Agent** – Analyzes your request and generates a detailed project plan.
-- **Architect Agent** – Breaks down the plan into specific engineering tasks with explicit context for each file.
-- **Coder Agent** – Implements each task, writes directly into files, and uses available tools like a real developer.
+**Deployment scope:** a private, single-owner application with one application worker and one shared access token. Anyone with that token can access every project. It is not a multi-user SaaS service. Do not expose it publicly without TLS and appropriate access controls. Generated projects are drafts requiring human review and isolated runtime testing; a completed job does not certify that its generated application is correct or production-ready.
 
-<div style="text-align: center;">
-    <img src="resources/coder_buddy_diagram.png" alt="Coder Agent Architecture" width="90%"/>
-</div>
+## Fastest start: use your ChatGPT account
 
----
+Install Python 3.11–3.13 and [uv](https://docs.astral.sh/uv/getting-started/installation/), then run:
 
-## 🚀 Getting Started
-### Prerequisites
-- Make sure you have uv installed, follow the instructions [here](https://docs.astral.sh/uv/getting-started/installation/) to install it.
-- Ensure that you have created a groq account and have your API key ready. Create an API key [here](https://console.groq.com/keys).
+```sh
+git clone --branch improve/reliable-coder-buddy https://github.com/vedpathaksanket/Codder-buddy.git
+cd Codder-buddy
+uv sync --frozen
+uv run python start.py
+```
 
-### ⚙️ **Instsllstion and Startup**
-- Create a virtual environment using: `uv venv` and activate it using `source .venv/bin/activate`
-- Install the dependencies using: `uv pip install -r pyproject.toml`
-- Create a `.env` file and add the variables and their respective values mentioned in the `.sample_env` file
+The launcher creates an access token in `.env`, displays it in your local terminal, and starts the app at **http://127.0.0.1:8000**. Paste that token into the sign-in form. If port 8000 is already busy, run `uv run python start.py --port 8001`.
 
-Now that we are done with all the set-up & installation steps we can start the application using the following command:
-  ```bash
-    python main.py
-  ```
+1. Select **ChatGPT · copy and import** and enter your project brief.
+2. Click **Prepare ChatGPT prompt**, then **Copy prompt**.
+3. Open ChatGPT using your own account, paste the prompt and obtain the JSON response.
+4. Paste the complete JSON into Coder Buddy, or select the downloaded JSON file.
+5. Click **Validate and import project**, inspect the files and download the ZIP.
 
-### 🧪 Example Prompts
-- Create a to-do list application using html, css, and javascript.
-- Create a simple calculator web application.
-- Create a simple blog API in FastAPI with a SQLite database.
+This is a manual workflow. It does not automatically connect your Plus subscription or use your ChatGPT session. Your ChatGPT plan's normal availability and limits apply. Direct subscription inference requires a separately authorized integration; it is not implemented here. The prompt contains your brief and output instructions, never the server access token.
 
----
-Copyright©️ Codebasics Inc. All rights reserved.
+Imports accept at most 20 files, 100,000 characters per file, 1 MB of combined file content, and a 2 MB JSON request. README.md is required. Markdown-wrapped JSON can be pasted. Invalid JSON, unsafe filenames, duplicate paths, file/directory collisions and invalid Python/JSON are rejected without saving a partial project. Correct the response in ChatGPT and import it again.
+
+## Automatic Groq generation (Windows PowerShell, macOS, Linux)
+
+Install Python 3.11–3.13 and [uv](https://docs.astral.sh/uv/getting-started/installation/), then:
+
+```sh
+git clone --branch improve/reliable-coder-buddy https://github.com/vedpathaksanket/Codder-buddy.git
+cd Codder-buddy
+uv sync --frozen
+```
+
+Copy `.env.example` to `.env`:
+
+```powershell
+# Windows PowerShell
+Copy-Item .env.example .env
+```
+
+```sh
+# macOS / Linux
+cp .env.example .env
+```
+
+Generate a server access token:
+
+```sh
+uv run python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+Edit `.env` locally:
+
+```dotenv
+GROQ_API_KEY=your_groq_api_key
+GROQ_MODEL=openai/gpt-oss-120b
+CODER_BUDDY_TOKEN=paste_your_generated_random_token_here
+CODER_BUDDY_DATA_DIR=data
+```
+
+Obtain the provider key from [Groq](https://console.groq.com/keys). The configured model must support tool calling and be available to your account. Provider usage and rate limits apply. Never commit `.env` or paste secrets into project prompts.
+
+Start the application:
+
+```sh
+uv run uvicorn app:app --host 127.0.0.1 --port 8000 --workers 1
+```
+
+Open **http://127.0.0.1:8000**, enter `CODER_BUDDY_TOKEN`, and describe a project. The token is kept only in tab memory. Start with a small app, inspect its README and source, download the ZIP, and run its documented checks in a disposable environment.
+
+Example brief:
+
+> Build a responsive task manager using HTML, CSS and JavaScript. Include add/edit/delete, priorities, filters and local storage. Add setup and manual test instructions.
+
+## CLI
+
+```sh
+uv run python main.py --prompt "Create a Python greeting program with a README" --output generated_projects/hello
+```
+
+With no `--prompt`, the CLI asks interactively. Each default run gets a new directory; an explicitly supplied output directory must be empty. CLI use needs `GROQ_API_KEY`, but not the web access token.
+
+## Docker
+
+After configuring `.env`:
+
+```sh
+docker compose up --build -d
+docker compose logs -f
+```
+
+Compose binds only to `127.0.0.1:8000`, stores projects in a named volume, and runs as a non-root user. Stop with `docker compose down`; do not add `-v` unless you intend to delete saved data. For remote private hosting, place it behind an authenticated HTTPS reverse proxy or private network. Do not increase the worker count or run multiple replicas against the same data directory.
+
+## Verification
+
+```sh
+uv sync --frozen
+uv run pytest -q
+uv run ruff check .
+node --check web/app.js
+# Browser test (requires Node.js 22+)
+npm ci
+npx playwright install chromium
+npm run test:e2e
+```
+
+Tests cover ChatGPT prompt export and import without a provider key, atomic rejection, Windows filename restrictions, first-run setup, and the full three-stage pipeline with controlled model responses, file coverage, repair limits, path traversal, symlink escapes, authentication, persistent history, downloads, deletion, provider failure redaction, request limits, and queue isolation. They do not call Groq or spend API credits. The browser tests start a separate deterministic fixture server and exercise sign-in, generation, ChatGPT import and invalid JSON feedback, source viewing, ZIP download, mobile layout, deletion and disconnect. Local Chromium execution was blocked by the development environment; browser verification runs in CI. A separate CI job builds the production Docker image and verifies non-root startup, authentication, import without a provider key, ZIP export and persistence after restart.
+
+For a live smoke test, configure your key, request a tiny Python greeting project, inspect the downloaded files, and run its tests in isolation. Compare the actual result with the prompt. Repeat with a small browser project. A live provider test requires valid account credentials and was not performed in the development environment.
+
+## Architecture and operations
+
+- `agent/states.py`: validated planning, task and generated-file contracts.
+- `agent/graph.py`: lazy model setup and bounded planner/architect/coder workflow.
+- `agent/tools.py`: workspace confinement and non-executing syntax checks.
+- `app.py`: authenticated API, single generation worker and SQLite metadata.
+- `web/`: framework-free browser interface. Source is displayed as text, never rendered as executable HTML.
+- `main.py`: automatic generation CLI.
+- `start.py`: local browser-app launcher with first-run setup.
+- `agent/chatgpt.py`: prompt export for the manual ChatGPT workflow.
+- `tests/`: provider-free integration and regression tests.
+
+A request moves through `queued → running → completed/failed`. The UI shows planning, architecture, coding and validation stages. Each model request has a 90-second timeout and at most two provider retries. A project is limited to 20 files, 100,000 characters per file, and 180,000 characters of existing-file context. These limits deliberately keep generation bounded. There is no shell tool, dependency installer, or runtime runner exposed to the model.
+
+Jobs and prompts persist in `data/jobs.sqlite3`; files live in `data/projects/<id>/`. Treat this directory as private. Back it up while the application is stopped. Jobs active during a restart become failed and can be retried manually. Generation is serialized, and excess submissions return HTTP 429. Delete completed or failed projects to reclaim space. Rotating the token in `.env` requires a restart and disconnects existing clients.
+
+`GET /healthz` is a public process liveness check, not a provider availability check. All `/api/*` routes require `Authorization: Bearer <token>`. Provider responses, secrets and source code are excluded from error logs; logs include the job ID and exception class for diagnosis.
+
+## Output assurance and limitations
+
+A completed result means every planned file was written, nonempty, and passed supported syntax checks. It does **not** mean JavaScript/HTML/CSS was runtime-tested, dependencies are secure, imports resolve, or the user's acceptance criteria passed. The UI and API expose this distinction. Review the code before installing dependencies or executing it.
+
+Before a public multi-user release, add individual accounts and per-user authorization, an external durable queue, per-user quotas and billing controls, a sandboxed build/test service, dependency scanning, production monitoring, and load/security testing. CI builds and smoke-tests the Docker image. Verify TLS, storage permissions, backups and networking on your actual deployment host before relying on it.
+
+## Troubleshooting
+
+- **Server refuses to start:** set a random `CODER_BUDDY_TOKEN` of at least 32 characters.
+- **401:** use the server token, not the Groq API key.
+- **Import rejected:** read the validation message, ask ChatGPT for corrected complete JSON, and retry. No partial import is saved.
+- **503 on Generate:** choose ChatGPT import, or configure `GROQ_API_KEY` and restart.
+- **Failed generation:** check the logged exception class, provider quota, model access and network. Retry with a smaller project. Partial output is not offered as a successful download.
+- **Queue full:** wait for a job to finish.
+- **Project limit reached:** delete old projects.
+- **File validation failure:** retry with a simpler brief; invalid output never receives a successful status.
+
+Original project copyright: Codebasics Inc. All rights reserved. Existing sample projects remain unchanged.

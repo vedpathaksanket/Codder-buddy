@@ -1,62 +1,54 @@
-import pathlib
-import subprocess
-from typing import Tuple
+"""Filesystem access restricted to an individual generation workspace.
 
-from langchain_core.tools import tool
-
-PROJECT_ROOT = pathlib.Path.cwd() / "generated_project"
-
-
-def safe_path_for_project(path: str) -> pathlib.Path:
-    p = (PROJECT_ROOT / path).resolve()
-    if PROJECT_ROOT.resolve() not in p.parents and PROJECT_ROOT.resolve() != p.parent and PROJECT_ROOT.resolve() != p:
-        raise ValueError("Attempt to write outside project root")
-    return p
+Generated code is never executed on the application host.
+"""
+import ast
+import json
+from pathlib import Path
+from agent.states import validate_path
 
 
-@tool
-def write_file(path: str, content: str) -> str:
-    """Writes content to a file at the specified path within the project root."""
-    p = safe_path_for_project(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with open(p, "w", encoding="utf-8") as f:
-        f.write(content)
-    return f"WROTE:{p}"
+class Workspace:
+    def __init__(self, root: Path):
+        self.root = root.resolve()
+        self.root.mkdir(parents=True, exist_ok=True)
+
+    def path(self, name: str) -> Path:
+        validate_path(name)
+        path = self.root / name
+        current = path
+        while current != self.root:
+            if current.is_symlink():
+                raise ValueError('Symlinks are not allowed')
+            current = current.parent
+        if not path.resolve().is_relative_to(self.root):
+            raise ValueError('Path escapes workspace')
+        return path
+
+    def write(self, name: str, content: str):
+        if not content.strip() or len(content.encode('utf-8')) > 400000:
+            raise ValueError('File is empty or exceeds 400 KB')
+        path = self.path(name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding='utf-8')
+
+    def read(self, name: str) -> str:
+        return self.path(name).read_text(encoding='utf-8')
 
 
-@tool
-def read_file(path: str) -> str:
-    """Reads content from a file at the specified path within the project root."""
-    p = safe_path_for_project(path)
-    if not p.exists():
-        return ""
-    with open(p, "r", encoding="utf-8") as f:
-        return f.read()
+def validate_content(name: str, content: str):
+    """Syntax-only checks. Does not import or execute generated programs."""
+    if not content.strip():
+        raise ValueError(f'{name}: empty file')
+    if content.lstrip().startswith('```'):
+        raise ValueError(f'{name}: remove Markdown code fences')
+    if name.endswith('.py'):
+        ast.parse(content, filename=name)
+    elif name.endswith('.json'):
+        json.loads(content)
 
 
-@tool
-def get_current_directory() -> str:
-    """Returns the current working directory."""
-    return str(PROJECT_ROOT)
-
-
-@tool
-def list_files(directory: str = ".") -> str:
-    """Lists all files in the specified directory within the project root."""
-    p = safe_path_for_project(directory)
-    if not p.is_dir():
-        return f"ERROR: {p} is not a directory"
-    files = [str(f.relative_to(PROJECT_ROOT)) for f in p.glob("**/*") if f.is_file()]
-    return "\n".join(files) if files else "No files found."
-
-@tool
-def run_cmd(cmd: str, cwd: str = None, timeout: int = 30) -> Tuple[int, str, str]:
-    """Runs a shell command in the specified directory and returns the result."""
-    cwd_dir = safe_path_for_project(cwd) if cwd else PROJECT_ROOT
-    res = subprocess.run(cmd, shell=True, cwd=str(cwd_dir), capture_output=True, text=True, timeout=timeout)
-    return res.returncode, res.stdout, res.stderr
-
-
-def init_project_root():
-    PROJECT_ROOT.mkdir(parents=True, exist_ok=True)
-    return str(PROJECT_ROOT)
+def validation_report():
+    return {'file_completeness': 'passed', 'python_json_syntax': 'passed where applicable',
+            'runtime_tests': 'not run',
+            'notice': 'Generated code is untrusted. Review it and run its tests in an isolated environment.'}

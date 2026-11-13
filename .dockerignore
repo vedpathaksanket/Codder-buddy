@@ -1,0 +1,14 @@
+.git
+.venv
+.env
+.env.*
+data
+generated_project
+generated_projects
+__pycache__
+.pytest_cache
+.ruff_cache
+node_modules
+test-results
+playwright-report
+tests
